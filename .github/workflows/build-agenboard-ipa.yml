@@ -1,0 +1,65 @@
+name: Build AgenBoard IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-agenboard-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build unsigned iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout build workflow
+        uses: actions/checkout@v4
+
+      - name: Checkout AgenBoard source
+        uses: actions/checkout@v4
+        with:
+          repository: JackAIStudio/AgenBoard
+          path: AgenBoard
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Fetch and verify Rime data
+        working-directory: AgenBoard
+        run: ./scripts/fetch-rime-data.sh
+
+      - name: Resolve Swift packages
+        working-directory: AgenBoard
+        run: xcodebuild -resolvePackageDependencies -project AgenBoard.xcodeproj -scheme AgenBoard
+
+      - name: Archive app (unsigned)
+        working-directory: AgenBoard
+        run: |
+          xcodebuild archive \
+            -project AgenBoard.xcodeproj \
+            -scheme AgenBoard \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/AgenBoard.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/AgenBoard.xcarchive/Products/Applications/AgenBoard.app"
+          test -d "$APP_PATH"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/AgenBoard.app"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/ipa/Payload" "$RUNNER_TEMP/AgenBoard-unsigned.ipa"
+          shasum -a 256 "$RUNNER_TEMP/AgenBoard-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgenBoard-unsigned-IPA
+          path: ${{ runner.temp }}/AgenBoard-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
